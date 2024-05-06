@@ -216,8 +216,12 @@ class TradRack:
         register_toolchange_commands = config.getboolean(
             "register_toolchange_commands", default=True
         )
+        self.register_empty_toolchange_commands = config.getboolean(
+            'register_empty_toolchange_commands', default=False
+        )
         self.save_active_lane = config.getboolean("save_active_lane", True)
         self.log_bowden_lengths = config.getboolean("log_bowden_lengths", False)
+
 
         # other variables
         self.toolhead = None
@@ -1009,14 +1013,15 @@ class TradRack:
     )
 
     def cmd_SELECT_TOOL(self, gcmd):
-        tool = int(gcmd.get_command().partition("T")[2])
-        params = gcmd.get_command_parameters()
-        params["TOOL"] = tool
-        self.cmd_TR_LOAD_TOOLHEAD(
-            self.gcode.create_gcode_command(
-                "TR_LOAD_TOOLHEAD", "TR_LOAD_TOOLHEAD", params
+        if not self.register_empty_toolchange_commands:
+            tool = int(gcmd.get_command().partition("T")[2])
+            params = gcmd.get_command_parameters()
+            params["TOOL"] = tool
+            self.cmd_TR_LOAD_TOOLHEAD(
+                self.gcode.create_gcode_command(
+                    "TR_LOAD_TOOLHEAD", "TR_LOAD_TOOLHEAD", params
+                )
             )
-        )
 
     # helper functions
     def _lower_servo(self, toolhead_dwell=False):

@@ -210,6 +210,12 @@ toolhead_unload_length:
 #   can be used to initiate toolchanges with Trad Rack. If set to
 #   False, the TR_LOAD_TOOLHEAD command can still be used as a
 #   substitute to initiate toolchanges. The default is True.
+#register_empty_toolchange_commands: False
+#   Register gcode commands T0, T1, T2, etc. without them doing 
+#   anyting. This helps to keep SuperSlicer able to correctly view the
+#   filament color in "Gcode Preview", when using different toolchange 
+#   macro. This option is ignored if register_toolchange_commands is 
+#   set to False. The default for this option is False.
 #save_active_lane: True
 #   Whether to save the active lane to disk whenever it is set using
 #   save_variables. If set to True, the TR_LOCATE_SELECTOR gcode
