@@ -5,7 +5,7 @@ set -e
 branch=${1:-main}
 module_dir=Kalico/klippy_module
 script_dir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-repo_source=https://github.com/Annex-Engineering/TradRack.git
+repo_source=https://github.com/mk-maddin/TradRack.git
 repo_dir=trad_rack_klippy_module
 
 if [[ "$script_dir" == *$module_dir ]]; then

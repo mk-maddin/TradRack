@@ -219,6 +219,9 @@ class TradRack:
         register_toolchange_commands = config.getboolean(
             "register_toolchange_commands", default=True
         )
+        self.register_empty_toolchange_commands = config.getboolean(
+            'register_empty_toolchange_commands', default=False
+        )
         self.save_active_lane = config.getboolean("save_active_lane", True)
         self.keep_servo_down_after_lane_load = config.getboolean(
             "keep_servo_down_after_lane_load", False
@@ -397,7 +400,7 @@ class TradRack:
             self.cmd_TR_PRINT_TOOL_GROUPS,
             desc=self.cmd_TR_PRINT_TOOL_GROUPS_help,
         )
-        if register_toolchange_commands:
+        if register_toolchange_commands and not self.register_empty_toolchange_commands:
             for i in range(self.lane_count):
                 self.gcode.register_command(
                     "T{}".format(i),
@@ -407,6 +410,16 @@ class TradRack:
                     ),
                     desc=(
                         "Load filament from Trad Rack into the toolhead from"
+                        " tool {}".format(i)
+                    ),
+                )
+        elif register_toolchange_commands and self.register_empty_toolchange_commands:
+            for i in range(self.lane_count):
+                self.gcode.register_command(
+                    "T{}".format(i),
+                    lambda *args: None,
+                    desc=(
+                        "Dummy to register T{} command but do nothing on execution"
                         " tool {}".format(i)
                     ),
                 )
@@ -966,7 +979,7 @@ class TradRack:
         self.sync_to_extruder = True
         self._restore_extruder_sync()
 
-    cmd_TR_UNSYNC_FROM_EXTRUDER_help = (
+    int(gcmd.get_command().partition("T")[2])TR_UNSYNC_FROM_EXTRUDER_help = (
         "Unsync Trad Rack's filament driver from the extruder"
     )
 
