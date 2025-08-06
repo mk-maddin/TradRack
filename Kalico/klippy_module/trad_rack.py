@@ -979,7 +979,7 @@ class TradRack:
         self.sync_to_extruder = True
         self._restore_extruder_sync()
 
-    TR_UNSYNC_FROM_EXTRUDER_help = (
+    cmd_TR_UNSYNC_FROM_EXTRUDER_help = (
         "Unsync Trad Rack's filament driver from the extruder"
     )
 
