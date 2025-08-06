@@ -419,7 +419,7 @@ class TradRack:
                     "T{}".format(i),
                     lambda *args: None,
                     desc=(
-                        "Dummy to register T{} command but do nothing on execution"
+                        "Dummy to register T[0-9] command but do nothing on execution"
                         " tool {}".format(i)
                     ),
                 )
