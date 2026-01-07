@@ -245,6 +245,10 @@ toolhead_unload_length:
 #post_load_gcode:
 #   Gcode command template that is run after the toolhead is
 #   loaded. The default is to run no extra commands.
+#runout_unload_failed_gcode:
+#   Gcode command template that is run if runout happened but 
+#   runout lane cannot be unloaded again by tradrack. 
+#   The default is to run no extra commands.
 #pause_gcode:
 #   Gcode command template that is run whenever Trad Rack needs to
 #   pause the print (usually due to a failed load or unload). The

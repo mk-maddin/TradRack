@@ -287,6 +287,9 @@ class TradRack:
         self.resume_macro = gcode_macro.load_template(
             config, "resume_gcode", "RESUME"
         )
+        self.runout_unload_failed_macro = gcode_macro.load_template(
+            config, "runout_unload_failed_gcode", ""
+        )
 
         # register gcode commands
         self.gcode = self.printer.lookup_object("gcode")
@@ -1991,15 +1994,39 @@ class TradRack:
                 check_runout_lane = False
             except self.printer.command_error:
                 self._raise_servo()
-                self.gcode.respond_info(
-                    "Failed to unload. Please pull filament {} out of the"
-                    " toolhead and selector, then use TR_RESUME to"
-                    " continue.".format(self.runout_lane)
-                )
-                logging.warning(
-                    "trad_rack: Failed to unload toolhead", exc_info=True
-                )
-                return False
+                
+                # run runout unload failed custom gcode
+                if self.runout_unload_failed_macro:
+                    self.gcode.respond_info(
+                        "Failed to unload lane {}. Executing runout_unload_failed_gcode".format(self.runout_lane)
+                    )
+                    logging.warning(
+                        "trad_rack: Failed to unload runout toolhead - running runout_unload_failed_gcode", exc_info=True
+                    )
+                    try:
+                        self.runout_unload_failed_macro.run_gcode_from_command()
+                        self.toolhead.wait_moves()
+                        self.tr_toolhead.wait_moves()
+                    except self.printer.command_error:
+                        self.gcode.respond_info(
+                            "Custom runout_unload_failed_gcode failed. Please pull filament {} out of the"
+                            " toolhead and selector, then use TR_RESUME to"
+                            " continue.".format(self.runout_lane)
+                        )
+                        logging.warning(
+                            "trad_rack: Failed to unload toolhead", exc_info=True
+                        )
+                        return False
+                else:
+                    self.gcode.respond_info(
+                        "Failed to unload. Please pull filament {} out of the"
+                        " toolhead and selector, then use TR_RESUME to"
+                        " continue.".format(self.runout_lane)
+                    )
+                    logging.warning(
+                        "trad_rack: Failed to unload toolhead", exc_info=True
+                    )
+                    return False
             self.runout_steps_done = 1
 
         # find a new lane to use
@@ -2330,6 +2357,8 @@ class TradRack:
         return {
             "curr_lane": self.curr_lane,
             "active_lane": self.active_lane,
+            "runout_lane": self.runout_lane,
+            "replacement_lane": self.replacement_lane,
             "next_lane": self.next_lane,
             "next_tool": self.next_tool,
             "tool_map": self.tool_map,
