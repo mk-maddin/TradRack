@@ -6,10 +6,11 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, math, os, time
 from collections import deque
-from extras.homing import Homing, HomingMove
-from gcode import CommandError
-from stepper import LookupMultiRail
-import chelper, toolhead, kinematics.extruder
+from .homing import Homing, HomingMove
+from .. import chelper, toolhead
+from ..gcode import CommandError
+from ..stepper import LookupMultiRail
+from ..kinematics import extruder
 
 SERVO_NAME = "servo tr_servo"
 SELECTOR_STEPPER_NAME = "stepper_tr_selector"
@@ -2382,10 +2383,7 @@ class TradRack:
 class TradRackToolHead(toolhead.ToolHead, object):
     def __init__(self, config, buffer_pull_speed, is_extruder_synced):
         self.printer = config.get_printer()
-        try:
-            self.danger_options = self.printer.lookup_object("danger_options")
-        except config.error:
-            pass
+        self.danger_options = self.printer.lookup_object("danger_options")
         self.reactor = self.printer.get_reactor()
         self.all_mcus = [
             m for n, m in self.printer.lookup_objects(module="mcu")
@@ -2432,18 +2430,29 @@ class TradRackToolHead(toolhead.ToolHead, object):
         self.print_time = 0.0
         self.special_queuing_state = "NeedPrime"
         self.priming_timer = None
-        # Setup for generating moves
-        self.motion_queuing = self.printer.load_object(config, "motion_queuing")
-        self.motion_queuing.register_flush_callback(
-            self._handle_step_flush, can_add_trapq=True
+        self.drip_completion = None
+        # Flush tracking
+        self.flush_timer = self.reactor.register_timer(self._flush_handler)
+        self.do_kick_flush_timer = True
+        self.last_flush_time = self.last_sg_flush_time = (
+            self.min_restart_time
+        ) = 0.0
+        self.need_flush_time = self.step_gen_time = self.clear_history_time = (
+            0.0
         )
-        self.trapq = self.motion_queuing.allocate_trapq()
-        self.trapq_append = self.motion_queuing.lookup_trapq_append()
+        # Kinematic step generation scan window time tracking
+        self.kin_flush_delay = toolhead.SDS_CHECK_TIME
+        self.kin_flush_times = []
+        # Setup iterative solver
+        ffi_main, ffi_lib = chelper.get_ffi()
+        self.trapq = ffi_main.gc(ffi_lib.trapq_alloc(), ffi_lib.trapq_free)
+        self.trapq_append = ffi_lib.trapq_append
+        self.trapq_finalize_moves = ffi_lib.trapq_finalize_moves
+        self.step_generators = []
         # Create kinematic class
         gcode = self.printer.lookup_object("gcode")
         self.Coord = gcode.Coord
-        extruder = kinematics.extruder.DummyExtruder(self.printer)
-        self.extra_axes = [extruder]
+        self.extruder = extruder.DummyExtruder(self.printer)
         try:
             self.kin = TradRackKinematics(self, config, is_extruder_synced)
         except config.error as e:
@@ -2483,6 +2492,11 @@ class TradRackKinematics:
             rail.setup_itersolve("cartesian_stepper_alloc", axis.encode())
         for s in self.get_steppers():
             s.set_trapq(toolhead.get_trapq())
+            toolhead.register_step_generator(s.generate_steps)
+        self.printer.register_event_handler(
+            "stepper_enable:motor_off", self._motor_off
+        )
+
         # Setup boundary checks
         self.sel_max_velocity, self.sel_max_accel = (
             toolhead.get_sel_max_velocity()
@@ -2531,6 +2545,9 @@ class TradRackKinematics:
         # Each axis is homed independently and in order
         for axis in homing_state.get_axes():
             self.home_axis(homing_state, axis, self.rails[axis])
+
+    def _motor_off(self, print_time):
+        self.limits = [(1.0, -1.0)] * self.stepper_count
 
     def _check_endstops(self, move):
         end_pos = move.end_pos
@@ -2782,6 +2799,8 @@ class TradRackExtruderSyncManager:
             self._prev_trapq = steppers[0].get_trapq()
             external_trapq = self.tr_toolhead.get_trapq()
             stepper_alloc = ffi_lib.cartesian_stepper_alloc(b"y")
+            prev_toolhead = self.toolhead
+            external_toolhead = self.tr_toolhead
             self.reset_fil_driver()
             new_pos = [0.0, 0.0, 0.0]
         elif sync_type == FIL_DRIVER_TO_EXTRUDER:
@@ -2790,6 +2809,8 @@ class TradRackExtruderSyncManager:
             extruder = self.toolhead.get_extruder()
             external_trapq = extruder.get_trapq()
             stepper_alloc = ffi_lib.extruder_stepper_alloc()
+            prev_toolhead = self.tr_toolhead
+            external_toolhead = self.toolhead
             new_pos = extruder.last_position
             if not isinstance(new_pos, list):
                 new_pos = [new_pos, 0.0, 0.0]
@@ -2806,6 +2827,8 @@ class TradRackExtruderSyncManager:
             )
             stepper.set_trapq(external_trapq)
             stepper.set_position(new_pos)
+            prev_toolhead.step_generators.remove(stepper.generate_steps)
+            external_toolhead.register_step_generator(stepper.generate_steps)
         self.sync_state = sync_type
 
     def sync_extruder_to_fil_driver(self):
@@ -2824,14 +2847,20 @@ class TradRackExtruderSyncManager:
 
         if self.sync_state == EXTRUDER_TO_FIL_DRIVER:
             steppers = self._get_extruder_mcu_steppers()
+            prev_toolhead = self.toolhead
+            external_toolhead = self.tr_toolhead
         elif self.sync_state == FIL_DRIVER_TO_EXTRUDER:
             self.printer.send_event("trad_rack:unsyncing_from_extruder")
             steppers = self.fil_driver_rail.get_steppers()
+            prev_toolhead = self.tr_toolhead
+            external_toolhead = self.toolhead
         else:
             raise Exception("Invalid sync_state: %d" % self.sync_state)
 
         for i in range(len(steppers)):
             stepper = steppers[i]
+            external_toolhead.step_generators.remove(stepper.generate_steps)
+            prev_toolhead.register_step_generator(stepper.generate_steps)
             stepper.set_trapq(self._prev_trapq)
             stepper.set_stepper_kinematics(self._prev_sks[i])
             stepper.set_rotation_distance(self._prev_rotation_dists[i])
